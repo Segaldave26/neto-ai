@@ -4,6 +4,7 @@ from twilio.rest import Client
 from dotenv import load_dotenv
 import os
 import httpx
+from datetime import datetime
 
 load_dotenv()
 
@@ -14,6 +15,7 @@ twilio = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 SECRET_CUENTA_B = os.getenv("SECRET_KEY_CUENTA_B", "CLAVEB")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+LIMITE_MENSAJES = 500
 
 HEADERS_SUPABASE = {
     "apikey": SUPABASE_KEY,
@@ -112,6 +114,18 @@ Estoy acá para ayudarte con las finanzas de tu empresa: flujo de caja, inversio
 
 ¿En qué te puedo dar una mano hoy?"""
 
+MENSAJE_NO_AUTORIZADO = """👋 ¡Hola! Soy *Neto AI*, tu CFO virtual.
+
+Para acceder al servicio necesitás una suscripción activa.
+
+Contactate con nosotros para activar tu cuenta. 💼"""
+
+MENSAJE_LIMITE = f"""⚠️ Llegaste al límite de *{LIMITE_MENSAJES} mensajes* de este mes.
+
+Tu acceso se renueva automáticamente el 1° del mes que viene.
+
+Para consultas urgentes contactate con nosotros. 💼"""
+
 
 async def get_cliente(numero):
     async with httpx.AsyncClient() as client:
@@ -124,11 +138,12 @@ async def get_cliente(numero):
 
 
 async def crear_cliente(numero):
+    mes_actual = datetime.now().month
     async with httpx.AsyncClient() as client:
         r = await client.post(
             f"{SUPABASE_URL}/rest/v1/clientes",
             headers=HEADERS_SUPABASE,
-            json={"numero": numero, "historial": []}
+            json={"numero": numero, "historial": [], "mensajes_mes": 0, "mes_actual": mes_actual}
         )
         data = r.json()
         return data[0] if isinstance(data, list) and data else None
@@ -143,6 +158,23 @@ async def actualizar_cliente(numero, datos):
         )
 
 
+async def chequear_y_actualizar_mensajes(numero, cliente):
+    mes_actual = datetime.now().month
+    mensajes_mes = cliente.get("mensajes_mes", 0)
+    mes_guardado = cliente.get("mes_actual", 0)
+
+    # Si cambió el mes, reseteamos el contador
+    if mes_guardado != mes_actual:
+        mensajes_mes = 0
+        await actualizar_cliente(numero, {"mensajes_mes": 0, "mes_actual": mes_actual})
+
+    if mensajes_mes >= LIMITE_MENSAJES:
+        return False
+
+    await actualizar_cliente(numero, {"mensajes_mes": mensajes_mes + 1})
+    return True
+
+
 @app.post("/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     form = await request.form()
@@ -151,13 +183,15 @@ async def whatsapp_webhook(request: Request):
 
     cliente = await get_cliente(numero)
 
+    # Cliente nuevo — registrar pero NO autorizar
     if not cliente:
-        cliente = await crear_cliente(numero)
-        if mensaje.upper() == SECRET_CUENTA_B.upper():
-            onboarding_estado[numero] = {"paso": 0}
-            enviar_whatsapp(numero, PREGUNTAS_ONBOARDING[0][1])
-            return {"status": "ok"}
-        enviar_whatsapp(numero, MENSAJE_BIENVENIDA)
+        await crear_cliente(numero)
+        enviar_whatsapp(numero, MENSAJE_NO_AUTORIZADO)
+        return {"status": "ok"}
+
+    # Cliente no autorizado
+    if not cliente.get("autorizado"):
+        enviar_whatsapp(numero, MENSAJE_NO_AUTORIZADO)
         return {"status": "ok"}
 
     # Onboarding Cuenta B en progreso
@@ -193,6 +227,12 @@ async def whatsapp_webhook(request: Request):
     if mensaje.upper() == "BLOQUEAR B":
         await actualizar_cliente(numero, {"cuenta_b_activa": False})
         enviar_whatsapp(numero, "🔒 Cuenta B bloqueada. Quedás en modo Cuenta A (formal) solamente.")
+        return {"status": "ok"}
+
+    # Chequear límite de mensajes
+    puede_continuar = await chequear_y_actualizar_mensajes(numero, cliente)
+    if not puede_continuar:
+        enviar_whatsapp(numero, MENSAJE_LIMITE)
         return {"status": "ok"}
 
     historial = cliente.get("historial") or []
