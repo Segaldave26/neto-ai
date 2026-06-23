@@ -133,6 +133,8 @@ async def get_cliente(numero):
             f"{SUPABASE_URL}/rest/v1/clientes?numero=eq.{numero}",
             headers=HEADERS_SUPABASE
         )
+        print(f"DEBUG get_cliente status: {r.status_code}")
+        print(f"DEBUG get_cliente response: {r.text}")
         data = r.json()
         return data[0] if data else None
 
