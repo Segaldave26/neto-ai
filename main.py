@@ -154,8 +154,12 @@ async def whatsapp_webhook(request: Request):
 
     cliente = await get_cliente(numero)
 
-    if not cliente:
+ if not cliente:
         cliente = await crear_cliente(numero)
+        if mensaje.upper() == SECRET_CUENTA_B.upper():
+            onboarding_estado[numero] = {"paso": 0}
+            enviar_whatsapp(numero, PREGUNTAS_ONBOARDING[0][1])
+            return {"status": "ok"}
         enviar_whatsapp(numero, MENSAJE_BIENVENIDA)
         return {"status": "ok"}
 
