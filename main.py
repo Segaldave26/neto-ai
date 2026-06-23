@@ -130,7 +130,7 @@ Para consultas urgentes contactate con nosotros. 💼"""
 async def get_cliente(numero):
     async with httpx.AsyncClient() as client:
         r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/clientes?numero=eq.{numero}",
+f"{SUPABASE_URL}/rest/v1/clientes?numero=eq.{numero.replace('+', '%2B')}",
             headers=HEADERS_SUPABASE
         )
         print(f"DEBUG get_cliente status: {r.status_code}")
